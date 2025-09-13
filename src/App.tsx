@@ -43,18 +43,95 @@ function App() {
   const [micPermission, setMicPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt');
   const [networkRetryCount, setNetworkRetryCount] = useState(0);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true);
   
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    // Check if speech recognition is supported
-    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
-    if (!SpeechRecognitionAPI) {
-      setError('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.');
-      return;
-    }
+    // Initialize speech recognition availability check
+    const initializeSpeechRecognition = async () => {
+      setIsInitializing(true);
+      
+      // Check if speech recognition is supported
+      const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+      
+      if (!SpeechRecognitionAPI) {
+        setError('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.');
+        setSpeechSupported(false);
+        setIsInitializing(false);
+        return;
+      }
+
+      // Test if speech recognition actually works
+      try {
+        const testRecognition = new SpeechRecognitionAPI();
+        testRecognition.continuous = false;
+        testRecognition.interimResults = false;
+        
+        // Set a timeout to detect if the service is available
+        const serviceTimeout = setTimeout(() => {
+          testRecognition.stop();
+          setError('Speech recognition service is not responding. This may be due to: 1) No internet connection, 2) Browser restrictions, or 3) Service unavailability.');
+          setSpeechSupported(false);
+          setIsInitializing(false);
+        }, 10000); // 10 second timeout
+
+        testRecognition.onstart = () => {
+          clearTimeout(serviceTimeout);
+          testRecognition.stop();
+          setSpeechSupported(true);
+          setError('');
+          setIsInitializing(false);
+        };
+
+        testRecognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+          clearTimeout(serviceTimeout);
+          console.error('Speech recognition test error:', event.error);
+          
+          switch (event.error) {
+            case 'network':
+              setError('Network connection required for speech recognition. Please check your internet connection.');
+              break;
+            case 'not-allowed':
+              setError('Microphone access denied. Please allow microphone access in your browser.');
+              setMicPermission('denied');
+              break;
+            case 'service-not-allowed':
+              setError('Speech recognition service blocked. Try refreshing the page or using a different browser.');
+              break;
+            default:
+              setError(`Speech recognition unavailable: ${event.error}. Try refreshing the page.`);
+          }
+          setSpeechSupported(false);
+          setIsInitializing(false);
+        };
+
+        // Request microphone permission first
+        try {
+          await navigator.mediaDevices.getUserMedia({ audio: true });
+          setMicPermission('granted');
+          testRecognition.start();
+        } catch (err) {
+          clearTimeout(serviceTimeout);
+          if (err instanceof DOMException && err.name === 'NotAllowedError') {
+            setError('Microphone access denied. Please allow microphone access and refresh the page.');
+            setMicPermission('denied');
+          } else {
+            setError('Unable to access microphone. Please check your microphone connection.');
+          }
+          setSpeechSupported(false);
+          setIsInitializing(false);
+        }
+      } catch (err) {
+        setError('Failed to initialize speech recognition. Please refresh the page and try again.');
+        setSpeechSupported(false);
+        setIsInitializing(false);
+      }
+    };
+
+    initializeSpeechRecognition();
 
     // Monitor network status
     const handleOnline = () => {
@@ -62,6 +139,8 @@ function App() {
       setNetworkRetryCount(0);
       if (error.includes('Network') || error.includes('network')) {
         setError('');
+        // Reinitialize speech recognition when back online
+        initializeSpeechRecognition();
       }
     };
     
@@ -70,7 +149,7 @@ function App() {
       if (isRecording) {
         stopRecording();
       }
-      setError('Network connection lost. Please check your internet connection.');
+      setError('Network connection lost. Speech recognition requires an internet connection.');
     };
 
     window.addEventListener('online', handleOnline);
@@ -83,6 +162,9 @@ function App() {
         
         permissionStatus.onchange = () => {
           setMicPermission(permissionStatus.state);
+          if (permissionStatus.state === 'granted') {
+            initializeSpeechRecognition();
+          }
         };
       })
       .catch(() => {
@@ -97,9 +179,19 @@ function App() {
         recognitionRef.current.stop();
       }
     };
-  }, [isRecording, error]);
+  }, []);
 
   const startRecording = async () => {
+    if (!speechSupported) {
+      setError('Speech recognition is not available. Please refresh the page and try again.');
+      return;
+    }
+
+    if (!isOnline) {
+      setError('Internet connection required for speech recognition. Please check your connection.');
+      return;
+    }
+
     try {
       // Clear any previous errors
       setError('');
@@ -113,6 +205,14 @@ function App() {
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
+      
+      // Add connection timeout
+      let connectionTimeout = setTimeout(() => {
+        recognition.stop();
+        setError('Connection timeout. Speech recognition service is not responding. Please try again.');
+        setIsRecording(false);
+        setInterimTranscription('');
+      }, 15000); // 15 second timeout
       
       // Add more robust error handling
       let restartTimeout: ReturnType<typeof setTimeout>;
@@ -139,26 +239,23 @@ function App() {
       };
 
       recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+        clearTimeout(connectionTimeout);
         console.error('Speech recognition error:', event.error);
         
         // Handle different types of errors
         switch (event.error) {
           case 'network':
             setNetworkRetryCount(prev => prev + 1);
-            if (networkRetryCount < 3) {
-              setError(`Network connection issue (attempt ${networkRetryCount + 1}/3). Retrying...`);
-              // Retry after 2 seconds
+            if (networkRetryCount < 2) {
+              setError(`Network issue (attempt ${networkRetryCount + 1}/3). Retrying in 3 seconds...`);
+              // Retry after 3 seconds
               setTimeout(() => {
-                if (isOnline && recognitionRef.current) {
-                  try {
-                    recognitionRef.current.start();
-                  } catch (err) {
-                    console.error('Failed to restart after network error:', err);
-                  }
+                if (isOnline && speechSupported) {
+                  startRecording();
                 }
-              }, 2000);
+              }, 3000);
             } else {
-              setError('Network connection issues persist. Please check your internet connection and try refreshing the page. Speech recognition may work better when deployed to a server with HTTPS.');
+              setError('Persistent network issues. Please check your internet connection, refresh the page, or try a different browser (Chrome recommended).');
               setIsRecording(false);
               setInterimTranscription('');
             }
@@ -178,12 +275,17 @@ function App() {
             setInterimTranscription('');
             break;
           case 'service-not-allowed':
-            setError('Speech recognition service not available. This often happens on localhost. Try deploying to a server with HTTPS or use Chrome/Edge.');
+            setError('Speech recognition service blocked. This can happen due to browser settings or corporate firewalls. Try using Chrome or refreshing the page.');
+            setIsRecording(false);
+            setInterimTranscription('');
+            break;
+          case 'aborted':
+            // Don't show error for aborted, user likely stopped intentionally
             setIsRecording(false);
             setInterimTranscription('');
             break;
           default:
-            setError(`Speech recognition error: ${event.error}. If this persists, try using the app on a server with HTTPS.`);
+            setError(`Speech recognition error: ${event.error}. Try refreshing the page or using Chrome browser.`);
             setIsRecording(false);
             setInterimTranscription('');
         }
@@ -211,8 +313,10 @@ function App() {
       };
 
       recognition.onstart = () => {
+        clearTimeout(connectionTimeout);
         setIsRecording(true);
         setError('');
+        setNetworkRetryCount(0); // Reset retry count on successful start
       };
 
       recognitionRef.current = recognition;
@@ -307,15 +411,40 @@ function App() {
       <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
         <div className="w-full max-w-4xl mx-auto">
           
+          {/* Initialization Status */}
+          {isInitializing && (
+            <div className="mb-8 p-4 bg-blue-100 border border-blue-300 rounded-lg text-sm text-blue-700">
+              <div className="flex items-center">
+                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-3"></div>
+                Initializing speech recognition... Please allow microphone access if prompted.
+              </div>
+            </div>
+          )}
+
           {/* Error Message */}
           {error && (
             <div className="mb-8 p-4 bg-gray-100 border border-gray-300 rounded-lg text-sm text-gray-700">
-              <div className="flex items-center justify-between">
-                <span>{error}</span>
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="font-medium mb-2">Issue Detected:</div>
+                  <div>{error}</div>
+                  {error.includes('network') || error.includes('Network') ? (
+                    <div className="mt-3 text-xs text-gray-600">
+                      <strong>Troubleshooting tips:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-1">
+                        <li>Check your internet connection</li>
+                        <li>Try refreshing the page</li>
+                        <li>Use Chrome browser for best compatibility</li>
+                        <li>Disable VPN if you're using one</li>
+                        <li>Check if your firewall is blocking the service</li>
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
                 {(error.includes('Network') || error.includes('network')) && (
                   <button
                     onClick={retryConnection}
-                    className="ml-4 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                    className="ml-4 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors flex-shrink-0"
                   >
                     Retry
                   </button>
@@ -338,14 +467,14 @@ function App() {
           <div className="flex items-center justify-center mb-8">
             <button
               onClick={toggleRecording}
-              disabled={!!error}
+              disabled={!!error || isInitializing || !speechSupported}
               className={`
                 relative p-6 rounded-full border-2 transition-all duration-300 transform hover:scale-105
                 ${isRecording 
                   ? 'border-black bg-black text-white shadow-lg' 
                   : 'border-gray-300 bg-white text-black hover:border-black'
                 }
-                ${error ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                ${error || isInitializing || !speechSupported ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
               `}
             >
               {isRecording ? (
@@ -361,11 +490,19 @@ function App() {
 
           <div className="text-center mb-8">
             <p className="text-lg font-light">
-              {isRecording ? 'Listening...' : 'Click the microphone to start'}
+              {isInitializing ? 'Setting up speech recognition...' : 
+               isRecording ? 'Listening...' : 
+               !speechSupported ? 'Speech recognition unavailable' :
+               'Click the microphone to start'}
             </p>
             {micPermission === 'denied' && (
               <p className="text-sm text-gray-500 mt-2">
                 Please enable microphone access in your browser settings
+              </p>
+            )}
+            {!speechSupported && !isInitializing && (
+              <p className="text-sm text-red-600 mt-2">
+                Speech recognition service is not available. Please refresh the page or try a different browser.
               </p>
             )}
             {window.location.protocol === 'http:' && window.location.hostname !== 'localhost' && (
@@ -373,9 +510,9 @@ function App() {
                 ⚠️ For best performance, use HTTPS. Some speech recognition features may be limited on HTTP.
               </p>
             )}
-            {window.location.hostname === 'localhost' && (
-              <p className="text-sm text-blue-600 mt-2">
-                💡 Running locally. If you experience network errors, try deploying to a server with HTTPS.
+            {speechSupported && !error && (
+              <p className="text-sm text-green-600 mt-2">
+                ✅ Speech recognition is ready. Make sure you have a stable internet connection.
               </p>
             )}
           </div>
@@ -463,8 +600,13 @@ function App() {
         <div className="max-w-4xl mx-auto text-center text-sm text-gray-500">
           <p>Data is stored temporarily and will be cleared when you close this tab.</p>
           <p className="mt-1">
-            💡 For best performance and reliability, deploy this app to a server with HTTPS (like Vercel, Netlify, or GitHub Pages).
+            💡 For best speech recognition performance: Use Chrome browser, ensure stable internet, and speak clearly.
           </p>
+          {!speechSupported && (
+            <p className="mt-2 text-blue-600">
+              📝 Speech recognition unavailable? You can still manually edit text in the transcription area above.
+            </p>
+          )}
         </div>
       </footer>
     </div>
