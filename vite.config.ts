@@ -7,6 +7,11 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+    sourcemap: false,
+  },
   server: {
     host: true,
     port: 5173,
@@ -16,6 +21,4 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
-  // For GitHub Pages deployment - uncomment and update if using GitHub Pages
-  // base: '/your-repo-name/',
 });
