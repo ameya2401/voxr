@@ -25,10 +25,10 @@ interface SpeechRecognition extends EventTarget {
 declare global {
   interface Window {
     SpeechRecognition: {
-      new (): SpeechRecognition;
+      new(): SpeechRecognition;
     };
     webkitSpeechRecognition: {
-      new (): SpeechRecognition;
+      new(): SpeechRecognition;
     };
   }
 }
@@ -45,89 +45,44 @@ function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
-  
+
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const timeoutRefs = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({});
+  const isRestartingRef = useRef(false);
 
   useEffect(() => {
     // Initialize speech recognition availability check
     const initializeSpeechRecognition = async () => {
       setIsInitializing(true);
-      
-      // Check if speech recognition is supported
+
+      // Check if speech recognition API exists in the browser
       const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-      
+
       if (!SpeechRecognitionAPI) {
-        setError('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.');
+        setError('Speech recognition is not supported in this browser. Please open this page in Chrome, Edge, or Safari.');
         setSpeechSupported(false);
         setIsInitializing(false);
         return;
       }
 
-      // Test if speech recognition actually works
+      // API exists - assume it's supported and let user try
+      // Actual errors will be caught when user starts recording
+      setSpeechSupported(true);
+      setIsInitializing(false);
+
+      // Check microphone permission status (non-blocking)
       try {
-        const testRecognition = new SpeechRecognitionAPI();
-        testRecognition.continuous = false;
-        testRecognition.interimResults = false;
-        
-        // Set a timeout to detect if the service is available
-        const serviceTimeout = setTimeout(() => {
-          testRecognition.stop();
-          setError('Speech recognition service is not responding. This may be due to: 1) No internet connection, 2) Browser restrictions, or 3) Service unavailability.');
-          setSpeechSupported(false);
-          setIsInitializing(false);
-        }, 10000); // 10 second timeout
-
-        testRecognition.onstart = () => {
-          clearTimeout(serviceTimeout);
-          testRecognition.stop();
-          setSpeechSupported(true);
-          setError('');
-          setIsInitializing(false);
-        };
-
-        testRecognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-          clearTimeout(serviceTimeout);
-          console.error('Speech recognition test error:', event.error);
-          
-          switch (event.error) {
-            case 'network':
-              setError('Network connection required for speech recognition. Please check your internet connection.');
-              break;
-            case 'not-allowed':
-              setError('Microphone access denied. Please allow microphone access in your browser.');
-              setMicPermission('denied');
-              break;
-            case 'service-not-allowed':
-              setError('Speech recognition service blocked. Try refreshing the page or using a different browser.');
-              break;
-            default:
-              setError(`Speech recognition unavailable: ${event.error}. Try refreshing the page.`);
-          }
-          setSpeechSupported(false);
-          setIsInitializing(false);
-        };
-
-        // Request microphone permission first
-        try {
-          await navigator.mediaDevices.getUserMedia({ audio: true });
-          setMicPermission('granted');
-          testRecognition.start();
-        } catch (err) {
-          clearTimeout(serviceTimeout);
-          if (err instanceof DOMException && err.name === 'NotAllowedError') {
-            setError('Microphone access denied. Please allow microphone access and refresh the page.');
-            setMicPermission('denied');
-          } else {
-            setError('Unable to access microphone. Please check your microphone connection.');
-          }
-          setSpeechSupported(false);
-          setIsInitializing(false);
+        const permissionStatus = await navigator.permissions?.query({ name: 'microphone' as PermissionName });
+        if (permissionStatus) {
+          setMicPermission(permissionStatus.state);
+          permissionStatus.onchange = () => {
+            setMicPermission(permissionStatus.state);
+          };
         }
-      } catch (err) {
-        setError('Failed to initialize speech recognition. Please refresh the page and try again.');
-        setSpeechSupported(false);
-        setIsInitializing(false);
+      } catch {
+        // Permissions API not supported, that's fine
+        setMicPermission('prompt');
       }
     };
 
@@ -139,11 +94,9 @@ function App() {
       setNetworkRetryCount(0);
       if (error.includes('Network') || error.includes('network')) {
         setError('');
-        // Reinitialize speech recognition when back online
-        initializeSpeechRecognition();
       }
     };
-    
+
     const handleOffline = () => {
       setIsOnline(false);
       if (isRecording) {
@@ -155,26 +108,16 @@ function App() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Check microphone permission
-    navigator.permissions?.query({ name: 'microphone' as PermissionName })
-      .then((permissionStatus) => {
-        setMicPermission(permissionStatus.state);
-        
-        permissionStatus.onchange = () => {
-          setMicPermission(permissionStatus.state);
-          if (permissionStatus.state === 'granted') {
-            initializeSpeechRecognition();
-          }
-        };
-      })
-      .catch(() => {
-        // Fallback for browsers that don't support permissions API
-        setMicPermission('prompt');
-      });
-
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+
+      // Clear all timeouts
+      Object.values(timeoutRefs.current).forEach(timeout => clearTimeout(timeout));
+      timeoutRefs.current = {};
+
+      isRestartingRef.current = false;
+
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
@@ -195,27 +138,24 @@ function App() {
     try {
       // Clear any previous errors
       setError('');
-      
+
       // Request microphone access
       await navigator.mediaDevices.getUserMedia({ audio: true });
-      
+
       const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
       const recognition = new SpeechRecognitionAPI();
-      
+
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
-      
+
       // Add connection timeout
-      let connectionTimeout = setTimeout(() => {
+      timeoutRefs.current.connection = setTimeout(() => {
         recognition.stop();
         setError('Connection timeout. Speech recognition service is not responding. Please try again.');
         setIsRecording(false);
         setInterimTranscription('');
       }, 15000); // 15 second timeout
-      
-      // Add more robust error handling
-      let restartTimeout: ReturnType<typeof setTimeout>;
 
       recognition.onresult = (event: SpeechRecognitionEvent) => {
         let finalTranscript = '';
@@ -223,7 +163,7 @@ function App() {
 
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
-          
+
           if (event.results[i].isFinal) {
             finalTranscript += transcript + ' ';
           } else {
@@ -234,14 +174,17 @@ function App() {
         if (finalTranscript) {
           setTranscription((prev: string) => prev + finalTranscript);
         }
-        
+
         setInterimTranscription(interimTranscript);
       };
 
       recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-        clearTimeout(connectionTimeout);
+        if (timeoutRefs.current.connection) {
+          clearTimeout(timeoutRefs.current.connection);
+          delete timeoutRefs.current.connection;
+        }
         console.error('Speech recognition error:', event.error);
-        
+
         // Handle different types of errors
         switch (event.error) {
           case 'network':
@@ -249,8 +192,8 @@ function App() {
             if (networkRetryCount < 2) {
               setError(`Network issue (attempt ${networkRetryCount + 1}/3). Retrying in 3 seconds...`);
               // Retry after 3 seconds
-              setTimeout(() => {
-                if (isOnline && speechSupported) {
+              timeoutRefs.current.retry = setTimeout(() => {
+                if (isOnline && speechSupported && !isRestartingRef.current) {
                   startRecording();
                 }
               }, 3000);
@@ -292,36 +235,43 @@ function App() {
       };
 
       recognition.onend = () => {
-        // Only stop if we're not supposed to be recording
-        if (isRecording) {
+        // Only restart if we're supposed to be recording and not already restarting
+        if (isRecording && !isRestartingRef.current) {
+          isRestartingRef.current = true;
           // Try to restart after a brief delay if we were recording
-          restartTimeout = setTimeout(() => {
-            if (recognitionRef.current && isRecording) {
+          timeoutRefs.current.restart = setTimeout(() => {
+            if (recognitionRef.current && isRecording && !isRestartingRef.current) {
               try {
                 recognitionRef.current.start();
               } catch (err) {
                 console.error('Failed to restart recognition:', err);
                 setIsRecording(false);
                 setInterimTranscription('');
+                isRestartingRef.current = false;
               }
             }
           }, 100);
         } else {
           setIsRecording(false);
           setInterimTranscription('');
+          isRestartingRef.current = false;
         }
       };
 
       recognition.onstart = () => {
-        clearTimeout(connectionTimeout);
+        if (timeoutRefs.current.connection) {
+          clearTimeout(timeoutRefs.current.connection);
+          delete timeoutRefs.current.connection;
+        }
         setIsRecording(true);
         setError('');
         setNetworkRetryCount(0); // Reset retry count on successful start
+        isRestartingRef.current = false; // Reset restart flag
       };
 
       recognitionRef.current = recognition;
       recognition.start();
-      
+
     } catch (err) {
       console.error('Failed to start recording:', err);
       if (err instanceof DOMException) {
@@ -341,6 +291,12 @@ function App() {
   };
 
   const stopRecording = () => {
+    // Clear all timeouts
+    Object.values(timeoutRefs.current).forEach(timeout => clearTimeout(timeout));
+    timeoutRefs.current = {};
+
+    isRestartingRef.current = false;
+
     if (recognitionRef.current) {
       recognitionRef.current.stop();
     }
@@ -353,6 +309,27 @@ function App() {
       stopRecording();
     } else {
       startRecording();
+    }
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    // Space bar to toggle recording
+    if (event.code === 'Space' && !isEditing) {
+      event.preventDefault();
+      toggleRecording();
+    }
+    // Escape to stop recording or exit edit mode
+    if (event.code === 'Escape') {
+      if (isRecording) {
+        stopRecording();
+      } else if (isEditing) {
+        setIsEditing(false);
+      }
+    }
+    // Enter to start editing (when not already editing)
+    if (event.code === 'Enter' && !isEditing && transcription) {
+      event.preventDefault();
+      toggleEdit();
     }
   };
 
@@ -396,7 +373,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-white text-black flex flex-col">
+    <div className="min-h-screen bg-white text-black flex flex-col" onKeyDown={handleKeyDown} tabIndex={-1}>
       {/* Header */}
       <header className="border-b border-gray-200 px-6 py-4">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
@@ -408,9 +385,21 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
+      <main className="flex-1 flex flex-col items-center justify-center px-4 md:px-6 py-8 md:py-12">
         <div className="w-full max-w-4xl mx-auto">
-          
+
+          {/* Keyboard shortcuts info */}
+          <div className="mb-4 text-center">
+            <details className="text-sm text-gray-500">
+              <summary className="cursor-pointer hover:text-gray-700">Keyboard Shortcuts</summary>
+              <div className="mt-2 space-y-1">
+                <p><kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Space</kbd> - Toggle recording</p>
+                <p><kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Escape</kbd> - Stop recording or exit edit</p>
+                <p><kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Enter</kbd> - Edit transcription</p>
+              </div>
+            </details>
+          </div>
+
           {/* Initialization Status */}
           {isInitializing && (
             <div className="mb-8 p-4 bg-blue-100 border border-blue-300 rounded-lg text-sm text-blue-700">
@@ -428,20 +417,21 @@ function App() {
                 <div className="flex-1">
                   <div className="font-medium mb-2">Issue Detected:</div>
                   <div>{error}</div>
-                  {error.includes('network') || error.includes('Network') ? (
+                  {(error.includes('network') || error.includes('Network') || error.includes('localhost')) && (
                     <div className="mt-3 text-xs text-gray-600">
                       <strong>Troubleshooting tips:</strong>
                       <ul className="list-disc list-inside mt-1 space-y-1">
                         <li>Check your internet connection</li>
-                        <li>Try refreshing the page</li>
+                        <li>For localhost development: Access via network IP (check terminal)</li>
                         <li>Use Chrome browser for best compatibility</li>
+                        <li>Try using a tunneling service like ngrok for HTTPS</li>
                         <li>Disable VPN if you're using one</li>
                         <li>Check if your firewall is blocking the service</li>
                       </ul>
                     </div>
-                  ) : null}
+                  )}
                 </div>
-                {(error.includes('Network') || error.includes('network')) && (
+                {(error.includes('Network') || error.includes('network') || error.includes('localhost')) && (
                   <button
                     onClick={retryConnection}
                     className="ml-4 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors flex-shrink-0"
@@ -468,32 +458,34 @@ function App() {
             <button
               onClick={toggleRecording}
               disabled={!!error || isInitializing || !speechSupported}
+              aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+              aria-pressed={isRecording}
               className={`
-                relative p-6 rounded-full border-2 transition-all duration-300 transform hover:scale-105
-                ${isRecording 
-                  ? 'border-black bg-black text-white shadow-lg' 
-                  : 'border-gray-300 bg-white text-black hover:border-black'
+                relative p-8 md:p-6 rounded-full border-2 transition-all duration-300 transform active:scale-95 touch-manipulation
+                ${isRecording
+                  ? 'border-black bg-black text-white shadow-lg'
+                  : 'border-gray-300 bg-white text-black hover:border-black active:bg-gray-50'
                 }
                 ${error || isInitializing || !speechSupported ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
               `}
             >
               {isRecording ? (
                 <>
-                  <MicOff size={32} />
+                  <MicOff size={40} className="md:w-8 md:h-8" />
                   <div className="absolute inset-0 rounded-full border-2 border-black animate-ping opacity-25"></div>
                 </>
               ) : (
-                <Mic size={32} />
+                <Mic size={40} className="md:w-8 md:h-8" />
               )}
             </button>
           </div>
 
           <div className="text-center mb-8">
-            <p className="text-lg font-light">
-              {isInitializing ? 'Setting up speech recognition...' : 
-               isRecording ? 'Listening...' : 
-               !speechSupported ? 'Speech recognition unavailable' :
-               'Click the microphone to start'}
+            <p className="text-xl md:text-lg font-light">
+              {isInitializing ? 'Setting up speech recognition...' :
+                isRecording ? 'Listening...' :
+                  !speechSupported ? 'Speech recognition unavailable' :
+                    'Tap the microphone to start'}
             </p>
             {micPermission === 'denied' && (
               <p className="text-sm text-gray-500 mt-2">
@@ -505,9 +497,9 @@ function App() {
                 Speech recognition service is not available. Please refresh the page or try a different browser.
               </p>
             )}
-            {window.location.protocol === 'http:' && window.location.hostname !== 'localhost' && (
+            {(window.location.protocol === 'http:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && (
               <p className="text-sm text-yellow-600 mt-2">
-                ⚠️ For best performance, use HTTPS. Some speech recognition features may be limited on HTTP.
+                ⚠️ Speech recognition works best on HTTPS. For development, try accessing via your network IP address (check terminal output) or use a tunneling service like ngrok.
               </p>
             )}
             {speechSupported && !error && (
@@ -520,46 +512,50 @@ function App() {
           {/* Transcription Area */}
           <div className="relative">
             <div className="border border-gray-300 rounded-lg overflow-hidden">
-              <div className="flex items-center justify-between bg-gray-50 px-4 py-2 border-b border-gray-200">
+              <div className="flex items-center justify-between bg-gray-50 px-4 py-3 border-b border-gray-200">
                 <span className="text-sm font-medium text-gray-700">Transcription</span>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1">
                   <button
                     onClick={toggleEdit}
-                    className="p-2 hover:bg-gray-200 rounded transition-colors duration-200"
+                    aria-label={isEditing ? 'Stop editing' : 'Edit text'}
+                    className="p-2 hover:bg-gray-200 rounded transition-colors duration-200 touch-manipulation"
                     title={isEditing ? 'Stop editing' : 'Edit text'}
                   >
-                    <Edit3 size={16} />
+                    <Edit3 size={18} className="md:w-4 md:h-4" />
                   </button>
                   <button
                     onClick={copyToClipboard}
                     disabled={!transcription}
-                    className="p-2 hover:bg-gray-200 rounded transition-colors duration-200 disabled:opacity-50"
+                    aria-label="Copy transcription to clipboard"
+                    className="p-2 hover:bg-gray-200 rounded transition-colors duration-200 disabled:opacity-50 touch-manipulation"
                     title="Copy to clipboard"
                   >
-                    {isCopied ? <Check size={16} className="text-green-600" /> : <Copy size={16} />}
+                    {isCopied ? <Check size={18} className="text-green-600 md:w-4 md:h-4" /> : <Copy size={18} className="md:w-4 md:h-4" />}
                   </button>
                   <button
                     onClick={clearTranscription}
                     disabled={!transcription}
-                    className="px-3 py-1 text-sm hover:bg-gray-200 rounded transition-colors duration-200 disabled:opacity-50"
+                    aria-label="Clear transcription"
+                    className="px-3 py-1 text-sm hover:bg-gray-200 rounded transition-colors duration-200 disabled:opacity-50 touch-manipulation"
                     title="Clear transcription"
                   >
                     Clear
                   </button>
                 </div>
               </div>
-              
-              <div className="p-4">
+
+              <div className="p-4" data-selectable="true">
                 {isEditing ? (
                   <textarea
                     ref={textareaRef}
                     value={transcription}
                     onChange={handleTextChange}
-                    className="w-full h-64 resize-none border-none outline-none text-lg leading-relaxed"
+                    aria-label="Edit transcription text"
+                    className="w-full h-64 md:h-80 resize-none border-none outline-none text-lg leading-relaxed touch-manipulation"
                     placeholder="Your transcribed text will appear here..."
                   />
                 ) : (
-                  <div className="min-h-64 text-lg leading-relaxed">
+                  <div className="min-h-64 md:min-h-80 text-lg leading-relaxed" role="region" aria-label="Transcribed text">
                     {transcription && (
                       <span>{transcription}</span>
                     )}
@@ -577,7 +573,7 @@ function App() {
 
           {/* Status Bar */}
           <div className="mt-6 text-center">
-            <div className="inline-flex items-center space-x-4 text-sm text-gray-500">
+            <div className="inline-flex items-center space-x-4 text-sm text-gray-500 flex-wrap justify-center gap-2">
               <span>Words: {transcription.trim().split(/\s+/).filter(word => word.length > 0).length}</span>
               <span>Characters: {transcription.length}</span>
               <span className="flex items-center">
@@ -596,12 +592,17 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-gray-200 px-6 py-4">
+      <footer className="border-t border-gray-200 px-4 md:px-6 py-4">
         <div className="max-w-4xl mx-auto text-center text-sm text-gray-500">
           <p>Data is stored temporarily and will be cleared when you close this tab.</p>
           <p className="mt-1">
             💡 For best speech recognition performance: Use Chrome browser, ensure stable internet, and speak clearly.
           </p>
+          {(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && (
+            <p className="mt-2 text-blue-600">
+              🔧 Development mode: If speech recognition doesn't work, try accessing via your network IP address or use ngrok for HTTPS.
+            </p>
+          )}
           {!speechSupported && (
             <p className="mt-2 text-blue-600">
               📝 Speech recognition unavailable? You can still manually edit text in the transcription area above.
