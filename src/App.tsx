@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Copy, Edit3, Check } from 'lucide-react';
+import { Mic, MicOff, Copy, Edit3, Check, Sun, Moon } from 'lucide-react';
 
 interface SpeechRecognitionEvent extends Event {
   results: SpeechRecognitionResultList;
@@ -51,11 +51,31 @@ function App() {
   const [speechSupported, setSpeechSupported] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isBraveBrowser, setIsBraveBrowser] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('darkMode');
+      if (saved !== null) return JSON.parse(saved);
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const timeoutRefs = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({});
   const isRestartingRef = useRef(false);
+
+  // Handle dark mode toggle
+  useEffect(() => {
+    localStorage.setItem('darkMode', JSON.stringify(darkMode));
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]);
+
+  const toggleDarkMode = () => setDarkMode(!darkMode);
 
   useEffect(() => {
     // Check if running in Brave browser
@@ -389,13 +409,22 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-white text-black flex flex-col" onKeyDown={handleKeyDown} tabIndex={-1}>
+    <div className="min-h-screen bg-white dark:bg-gray-900 text-black dark:text-white flex flex-col transition-colors duration-200" onKeyDown={handleKeyDown} tabIndex={-1}>
       {/* Header */}
-      <header className="border-b border-gray-200 px-6 py-4">
+      <header className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <h1 className="text-2xl font-light tracking-wide">Speech to Text</h1>
-          <div className="text-sm text-gray-500">
-            Real-time transcription
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-gray-500 dark:text-gray-400 hidden sm:inline">
+              Real-time transcription
+            </span>
+            <button
+              onClick={toggleDarkMode}
+              aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            >
+              {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+            </button>
           </div>
         </div>
       </header>
@@ -406,19 +435,19 @@ function App() {
 
           {/* Keyboard shortcuts info */}
           <div className="mb-4 text-center">
-            <details className="text-sm text-gray-500">
-              <summary className="cursor-pointer hover:text-gray-700">Keyboard Shortcuts</summary>
+            <details className="text-sm text-gray-500 dark:text-gray-400">
+              <summary className="cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">Keyboard Shortcuts</summary>
               <div className="mt-2 space-y-1">
-                <p><kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Space</kbd> - Toggle recording</p>
-                <p><kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Escape</kbd> - Stop recording or exit edit</p>
-                <p><kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Enter</kbd> - Edit transcription</p>
+                <p><kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded text-xs">Space</kbd> - Toggle recording</p>
+                <p><kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded text-xs">Escape</kbd> - Stop recording or exit edit</p>
+                <p><kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded text-xs">Enter</kbd> - Edit transcription</p>
               </div>
             </details>
           </div>
 
           {/* Initialization Status */}
           {isInitializing && (
-            <div className="mb-8 p-4 bg-blue-100 border border-blue-300 rounded-lg text-sm text-blue-700">
+            <div className="mb-8 p-4 bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 rounded-lg text-sm text-blue-700 dark:text-blue-300">
               <div className="flex items-center">
                 <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-3"></div>
                 Initializing speech recognition... Please allow microphone access if prompted.
@@ -428,7 +457,7 @@ function App() {
 
           {/* Brave Browser Warning */}
           {isBraveBrowser && !error && (
-            <div className="mb-8 p-4 bg-orange-100 border border-orange-300 rounded-lg text-sm text-orange-800">
+            <div className="mb-8 p-4 bg-orange-100 dark:bg-orange-900/30 border border-orange-300 dark:border-orange-700 rounded-lg text-sm text-orange-800 dark:text-orange-300">
               <div className="font-medium mb-2">🦁 Brave Browser Detected</div>
               <p className="mb-2">Brave blocks speech recognition by default for privacy. To enable it:</p>
               <ol className="list-decimal list-inside space-y-1 text-xs">
@@ -442,7 +471,7 @@ function App() {
 
           {/* Brave Blocked Error */}
           {error === 'BRAVE_BLOCKED' && (
-            <div className="mb-8 p-4 bg-orange-100 border border-orange-300 rounded-lg text-sm text-orange-800">
+            <div className="mb-8 p-4 bg-orange-100 dark:bg-orange-900/30 border border-orange-300 dark:border-orange-700 rounded-lg text-sm text-orange-800 dark:text-orange-300">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="font-medium mb-2">🦁 Speech Recognition Blocked by Brave Shields</div>
@@ -452,7 +481,7 @@ function App() {
                     <li>Toggle <strong>Shields OFF</strong> for this site</li>
                     <li>Click the button below to retry</li>
                   </ol>
-                  <p className="text-xs text-orange-600">Alternatively, use Chrome or Edge for full compatibility without disabling shields.</p>
+                  <p className="text-xs text-orange-600 dark:text-orange-400">Alternatively, use Chrome or Edge for full compatibility without disabling shields.</p>
                 </div>
                 <button
                   onClick={() => { setError(''); retryConnection(); }}
@@ -466,13 +495,13 @@ function App() {
 
           {/* Error Message */}
           {error && error !== 'BRAVE_BLOCKED' && (
-            <div className="mb-8 p-4 bg-gray-100 border border-gray-300 rounded-lg text-sm text-gray-700">
+            <div className="mb-8 p-4 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-700 dark:text-gray-300">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="font-medium mb-2">Issue Detected:</div>
                   <div>{error}</div>
                   {(error.includes('network') || error.includes('Network') || error.includes('localhost')) && (
-                    <div className="mt-3 text-xs text-gray-600">
+                    <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">
                       <strong>Troubleshooting tips:</strong>
                       <ul className="list-disc list-inside mt-1 space-y-1">
                         <li>Check your internet connection</li>
@@ -499,7 +528,7 @@ function App() {
 
           {/* Network Status */}
           {!isOnline && (
-            <div className="mb-8 p-4 bg-red-100 border border-red-300 rounded-lg text-sm text-red-700">
+            <div className="mb-8 p-4 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-lg text-sm text-red-700 dark:text-red-300">
               <div className="flex items-center">
                 <div className="w-2 h-2 bg-red-500 rounded-full mr-2"></div>
                 You are currently offline. Speech recognition requires an internet connection.
@@ -517,8 +546,8 @@ function App() {
               className={`
                 relative p-8 md:p-6 rounded-full border-2 transition-all duration-300 transform active:scale-95 touch-manipulation
                 ${isRecording
-                  ? 'border-black bg-black text-white shadow-lg'
-                  : 'border-gray-300 bg-white text-black hover:border-black active:bg-gray-50'
+                  ? 'border-white dark:border-white bg-black dark:bg-white text-white dark:text-black shadow-lg'
+                  : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-black dark:text-white hover:border-black dark:hover:border-white active:bg-gray-50 dark:active:bg-gray-700'
                 }
                 ${(error && error !== 'BRAVE_BLOCKED') || isInitializing || !speechSupported ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
               `}
@@ -526,7 +555,7 @@ function App() {
               {isRecording ? (
                 <>
                   <MicOff size={40} className="md:w-8 md:h-8" />
-                  <div className="absolute inset-0 rounded-full border-2 border-black animate-ping opacity-25"></div>
+                  <div className="absolute inset-0 rounded-full border-2 border-black dark:border-white animate-ping opacity-25"></div>
                 </>
               ) : (
                 <Mic size={40} className="md:w-8 md:h-8" />
@@ -542,22 +571,22 @@ function App() {
                     'Tap the microphone to start'}
             </p>
             {micPermission === 'denied' && (
-              <p className="text-sm text-gray-500 mt-2">
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
                 Please enable microphone access in your browser settings
               </p>
             )}
             {!speechSupported && !isInitializing && (
-              <p className="text-sm text-red-600 mt-2">
+              <p className="text-sm text-red-600 dark:text-red-400 mt-2">
                 Speech recognition service is not available. Please refresh the page or try a different browser.
               </p>
             )}
             {(window.location.protocol === 'http:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && (
-              <p className="text-sm text-yellow-600 mt-2">
+              <p className="text-sm text-yellow-600 dark:text-yellow-400 mt-2">
                 ⚠️ Speech recognition works best on HTTPS. For development, try accessing via your network IP address (check terminal output) or use a tunneling service like ngrok.
               </p>
             )}
             {speechSupported && !error && (
-              <p className="text-sm text-green-600 mt-2">
+              <p className="text-sm text-green-600 dark:text-green-400 mt-2">
                 ✅ Speech recognition is ready. Make sure you have a stable internet connection.
               </p>
             )}
@@ -565,14 +594,14 @@ function App() {
 
           {/* Transcription Area */}
           <div className="relative">
-            <div className="border border-gray-300 rounded-lg overflow-hidden">
-              <div className="flex items-center justify-between bg-gray-50 px-4 py-3 border-b border-gray-200">
-                <span className="text-sm font-medium text-gray-700">Transcription</span>
+            <div className="border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Transcription</span>
                 <div className="flex items-center space-x-1">
                   <button
                     onClick={toggleEdit}
                     aria-label={isEditing ? 'Stop editing' : 'Edit text'}
-                    className="p-2 hover:bg-gray-200 rounded transition-colors duration-200 touch-manipulation"
+                    className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors duration-200 touch-manipulation"
                     title={isEditing ? 'Stop editing' : 'Edit text'}
                   >
                     <Edit3 size={18} className="md:w-4 md:h-4" />
@@ -581,16 +610,16 @@ function App() {
                     onClick={copyToClipboard}
                     disabled={!transcription}
                     aria-label="Copy transcription to clipboard"
-                    className="p-2 hover:bg-gray-200 rounded transition-colors duration-200 disabled:opacity-50 touch-manipulation"
+                    className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors duration-200 disabled:opacity-50 touch-manipulation"
                     title="Copy to clipboard"
                   >
-                    {isCopied ? <Check size={18} className="text-green-600 md:w-4 md:h-4" /> : <Copy size={18} className="md:w-4 md:h-4" />}
+                    {isCopied ? <Check size={18} className="text-green-600 dark:text-green-400 md:w-4 md:h-4" /> : <Copy size={18} className="md:w-4 md:h-4" />}
                   </button>
                   <button
                     onClick={clearTranscription}
                     disabled={!transcription}
                     aria-label="Clear transcription"
-                    className="px-3 py-1 text-sm hover:bg-gray-200 rounded transition-colors duration-200 disabled:opacity-50 touch-manipulation"
+                    className="px-3 py-1 text-sm hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors duration-200 disabled:opacity-50 touch-manipulation"
                     title="Clear transcription"
                   >
                     Clear
@@ -598,14 +627,14 @@ function App() {
                 </div>
               </div>
 
-              <div className="p-4" data-selectable="true">
+              <div className="p-4 bg-white dark:bg-gray-900" data-selectable="true">
                 {isEditing ? (
                   <textarea
                     ref={textareaRef}
                     value={transcription}
                     onChange={handleTextChange}
                     aria-label="Edit transcription text"
-                    className="w-full h-64 md:h-80 resize-none border-none outline-none text-lg leading-relaxed touch-manipulation"
+                    className="w-full h-64 md:h-80 resize-none border-none outline-none text-lg leading-relaxed touch-manipulation bg-transparent"
                     placeholder="Your transcribed text will appear here..."
                   />
                 ) : (
@@ -614,10 +643,10 @@ function App() {
                       <span>{transcription}</span>
                     )}
                     {interimTranscription && (
-                      <span className="text-gray-400 italic">{interimTranscription}</span>
+                      <span className="text-gray-400 dark:text-gray-500 italic">{interimTranscription}</span>
                     )}
                     {!transcription && !interimTranscription && (
-                      <p className="text-gray-400 italic">Your transcribed text will appear here...</p>
+                      <p className="text-gray-400 dark:text-gray-500 italic">Your transcribed text will appear here...</p>
                     )}
                   </div>
                 )}
@@ -627,7 +656,7 @@ function App() {
 
           {/* Status Bar */}
           <div className="mt-6 text-center">
-            <div className="inline-flex items-center space-x-4 text-sm text-gray-500 flex-wrap justify-center gap-2">
+            <div className="inline-flex items-center space-x-4 text-sm text-gray-500 dark:text-gray-400 flex-wrap justify-center gap-2">
               <span>Words: {transcription.trim().split(/\s+/).filter(word => word.length > 0).length}</span>
               <span>Characters: {transcription.length}</span>
               <span className="flex items-center">
@@ -646,19 +675,19 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-gray-200 px-4 md:px-6 py-4">
-        <div className="max-w-4xl mx-auto text-center text-sm text-gray-500">
+      <footer className="border-t border-gray-200 dark:border-gray-700 px-4 md:px-6 py-4">
+        <div className="max-w-4xl mx-auto text-center text-sm text-gray-500 dark:text-gray-400">
           <p>Data is stored temporarily and will be cleared when you close this tab.</p>
           <p className="mt-1">
             💡 For best speech recognition performance: Use Chrome browser, ensure stable internet, and speak clearly.
           </p>
           {(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && (
-            <p className="mt-2 text-blue-600">
+            <p className="mt-2 text-blue-600 dark:text-blue-400">
               🔧 Development mode: If speech recognition doesn't work, try accessing via your network IP address or use ngrok for HTTPS.
             </p>
           )}
           {!speechSupported && (
-            <p className="mt-2 text-blue-600">
+            <p className="mt-2 text-blue-600 dark:text-blue-400">
               📝 Speech recognition unavailable? You can still manually edit text in the transcription area above.
             </p>
           )}
