@@ -33,6 +33,11 @@ declare global {
   }
 }
 
+// Detect Brave browser
+const isBrave = (): boolean => {
+  return (navigator as Navigator & { brave?: { isBrave?: () => Promise<boolean> } }).brave !== undefined;
+};
+
 function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [transcription, setTranscription] = useState('');
@@ -45,6 +50,7 @@ function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [isBraveBrowser, setIsBraveBrowser] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -52,6 +58,9 @@ function App() {
   const isRestartingRef = useRef(false);
 
   useEffect(() => {
+    // Check if running in Brave browser
+    setIsBraveBrowser(isBrave());
+
     // Initialize speech recognition availability check
     const initializeSpeechRecognition = async () => {
       setIsInitializing(true);
@@ -188,6 +197,13 @@ function App() {
         // Handle different types of errors
         switch (event.error) {
           case 'network':
+            // Check if it's Brave browser - likely blocked by shields
+            if (isBraveBrowser) {
+              setError('BRAVE_BLOCKED');
+              setIsRecording(false);
+              setInterimTranscription('');
+              return;
+            }
             setNetworkRetryCount(prev => prev + 1);
             if (networkRetryCount < 2) {
               setError(`Network issue (attempt ${networkRetryCount + 1}/3). Retrying in 3 seconds...`);
@@ -410,8 +426,46 @@ function App() {
             </div>
           )}
 
+          {/* Brave Browser Warning */}
+          {isBraveBrowser && !error && (
+            <div className="mb-8 p-4 bg-orange-100 border border-orange-300 rounded-lg text-sm text-orange-800">
+              <div className="font-medium mb-2">🦁 Brave Browser Detected</div>
+              <p className="mb-2">Brave blocks speech recognition by default for privacy. To enable it:</p>
+              <ol className="list-decimal list-inside space-y-1 text-xs">
+                <li>Click the <strong>Brave Shields icon</strong> (lion icon) in the address bar</li>
+                <li>Turn <strong>Shields OFF</strong> for this site, OR</li>
+                <li>Click "Advanced controls" → Set "Block fingerprinting" to <strong>Allow</strong></li>
+                <li>Refresh the page after making changes</li>
+              </ol>
+            </div>
+          )}
+
+          {/* Brave Blocked Error */}
+          {error === 'BRAVE_BLOCKED' && (
+            <div className="mb-8 p-4 bg-orange-100 border border-orange-300 rounded-lg text-sm text-orange-800">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="font-medium mb-2">🦁 Speech Recognition Blocked by Brave Shields</div>
+                  <p className="mb-3">Brave's privacy shields are blocking the speech recognition service. To fix this:</p>
+                  <ol className="list-decimal list-inside space-y-2 mb-3">
+                    <li>Click the <strong>Brave Shields icon</strong> (lion) in the address bar</li>
+                    <li>Toggle <strong>Shields OFF</strong> for this site</li>
+                    <li>Click the button below to retry</li>
+                  </ol>
+                  <p className="text-xs text-orange-600">Alternatively, use Chrome or Edge for full compatibility without disabling shields.</p>
+                </div>
+                <button
+                  onClick={() => { setError(''); retryConnection(); }}
+                  className="ml-4 px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 transition-colors flex-shrink-0"
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Error Message */}
-          {error && (
+          {error && error !== 'BRAVE_BLOCKED' && (
             <div className="mb-8 p-4 bg-gray-100 border border-gray-300 rounded-lg text-sm text-gray-700">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
@@ -457,7 +511,7 @@ function App() {
           <div className="flex items-center justify-center mb-8">
             <button
               onClick={toggleRecording}
-              disabled={!!error || isInitializing || !speechSupported}
+              disabled={(!!error && error !== 'BRAVE_BLOCKED') || isInitializing || !speechSupported}
               aria-label={isRecording ? 'Stop recording' : 'Start recording'}
               aria-pressed={isRecording}
               className={`
@@ -466,7 +520,7 @@ function App() {
                   ? 'border-black bg-black text-white shadow-lg'
                   : 'border-gray-300 bg-white text-black hover:border-black active:bg-gray-50'
                 }
-                ${error || isInitializing || !speechSupported ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                ${(error && error !== 'BRAVE_BLOCKED') || isInitializing || !speechSupported ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
               `}
             >
               {isRecording ? (
